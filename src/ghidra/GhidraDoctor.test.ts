@@ -267,6 +267,34 @@ describe("Windows native doctor failure diagnostics", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it("tells a source checkout without the native artifact how to get it", async () => {
+    const load = vi.mocked(nativeLoader.systemWindowsNativeAuthority);
+    load.mockReturnValue({
+      available: false,
+      failureStage: "artifact",
+      missingArtifact: true,
+      reason: nativeLoader.WINDOWS_NATIVE_ARTIFACT_MISSING_REASON,
+    });
+    const result = await runDoctor(
+      undefined,
+      {
+        ...doctorHost(inspection({ installDir: INSTALL, platform: "win32" })),
+        platform: "win32",
+        linuxDistribution: () => Promise.resolve(undefined),
+      },
+      { providers: ["ghidra"] },
+    );
+    expect(result.healthy).toBe(false);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "ghidra-native_authority",
+        classification: "missing_dependency",
+        detail: nativeLoader.WINDOWS_NATIVE_ARTIFACT_MISSING_REASON,
+        remediation: expect.stringContaining("npm run build:windows-native"),
+      }),
+    );
+  });
+
   it.each([
     ["host", "unsupported_host", "unsupported_host", "Windows x64 host"],
     [

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   loadWindowsNativeAuthority,
+  WINDOWS_NATIVE_ARTIFACT_MISSING_REASON,
   type WindowsNativeLoadHost,
 } from "./WindowsNativeLoader.js";
 
@@ -216,6 +217,54 @@ describe("packaged Windows native admission", () => {
     expect(loadWindowsNativeAuthority(value.host)).toMatchObject({
       available: false,
       reason: expect.stringContaining("privateBridgeDescriptorAccess"),
+    });
+  });
+});
+
+describe("missing Windows native artifact", () => {
+  it.each(["readManifest", "readArtifact"] as const)(
+    "names the missing artifact and how to get it when %s finds no file",
+    (read) => {
+      const value = fixture();
+      const missing = Object.assign(
+        new Error("ENOENT: no such file or directory, open 'manifest.json'"),
+        { code: "ENOENT" },
+      );
+      const result = loadWindowsNativeAuthority({
+        ...value.host,
+        [read]: () => {
+          throw missing;
+        },
+      });
+      expect(result).toMatchObject({
+        available: false,
+        failureStage: "artifact",
+        missingArtifact: true,
+        reason: WINDOWS_NATIVE_ARTIFACT_MISSING_REASON,
+      });
+      expect(WINDOWS_NATIVE_ARTIFACT_MISSING_REASON).toContain(
+        "npm run build:windows-native",
+      );
+      expect(value.loads()).toBe(0);
+    },
+  );
+
+  it("keeps other read failures as reported, without the missing-artifact guidance", () => {
+    const value = fixture();
+    const denied = Object.assign(new Error("EACCES: permission denied"), {
+      code: "EACCES",
+    });
+    const result = loadWindowsNativeAuthority({
+      ...value.host,
+      readManifest: () => {
+        throw denied;
+      },
+    });
+    expect(result).toEqual({
+      available: false,
+      failureStage: "artifact",
+      reason:
+        "REA Windows native controls are unavailable: EACCES: permission denied",
     });
   });
 });

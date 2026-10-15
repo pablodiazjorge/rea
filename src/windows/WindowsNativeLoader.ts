@@ -74,7 +74,16 @@ export type WindowsNativeLoadResult =
       readonly failureStage: "host" | "artifact" | "self-test" | "inspection";
       /** Only a failed native invocation can recover on a later query. */
       readonly retryable?: true;
+      /** The artifact files do not exist, as in a source checkout that never ran the native build. */
+      readonly missingArtifact?: true;
     };
+
+/** Why a checkout without native/windows/build cannot load the addon, and the two ways to get it. */
+export const WINDOWS_NATIVE_ARTIFACT_MISSING_REASON =
+  "REA Windows native controls are unavailable: native/windows/build has no Windows native artifact. Source checkouts do not include it; install the published rea-agents package, which bundles it, or build it with `npm run build:windows-native` (see native/windows/README.md).";
+
+const isMissingFile = (cause: unknown): boolean =>
+  cause instanceof Error && (cause as NodeJS.ErrnoException).code === "ENOENT";
 
 /** Trusted package reads and module loading, replaceable in loader tests. */
 export interface WindowsNativeLoadHost {
@@ -139,6 +148,13 @@ export const loadWindowsNativeAuthority = (
     const inspection = parsed.data;
     return { available: true, authority: { call: binding.call, inspection } };
   } catch (cause: unknown) {
+    if (isMissingFile(cause))
+      return {
+        available: false,
+        failureStage: "artifact",
+        missingArtifact: true,
+        reason: WINDOWS_NATIVE_ARTIFACT_MISSING_REASON,
+      };
     return {
       available: false,
       failureStage: "artifact",
