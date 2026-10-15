@@ -4,6 +4,7 @@ import { diffLines } from "diff";
 import type { FunctionSnapshot } from "./functionDossierEvidence.js";
 import {
   commentProjection,
+  hasUnnamedReferenceEndpoint,
   identityProjection,
   isAutoName,
   normalizeCfg,
@@ -258,8 +259,10 @@ const compareReferences = (
   right: FunctionSnapshot,
   context: ComparisonContext,
 ): FunctionDimension => {
-  const leftProjection = referenceProjection(left);
-  const rightProjection = referenceProjection(right);
+  const sameArtifact =
+    left.subject.digest.sha256 === right.subject.digest.sha256;
+  const leftProjection = referenceProjection(left, sameArtifact);
+  const rightProjection = referenceProjection(right, sameArtifact);
   if (leftProjection.length === 0 && rightProjection.length === 0)
     return compareValues(
       "references",
@@ -284,17 +287,33 @@ const compareReferences = (
         "Reference endpoints differ independently of provider reference-kind metadata.",
       ],
     });
-  const leftKinds = referenceKindProjection(left);
-  const rightKinds = referenceKindProjection(right);
-  if (leftKinds !== null && rightKinds !== null)
-    return compareValues("references", leftKinds, rightKinds, context);
+  const leftKinds = referenceKindProjection(left, sameArtifact);
+  const rightKinds = referenceKindProjection(right, sameArtifact);
+  if (leftKinds === null || rightKinds === null)
+    return unresolvedDimension({
+      dimension: "references",
+      links: context.links,
+      leftCount: leftProjection.length,
+      rightCount: rightProjection.length,
+      limitations: [
+        "At least one provider did not expose reference kinds, so equal endpoints do not prove equal edge semantics.",
+      ],
+    });
+  const compared = compareValues("references", leftKinds, rightKinds, context);
+  // No pairing of unnamed endpoints can hide a difference among the known facts.
+  if (
+    compared.status === "changed" ||
+    sameArtifact ||
+    (!hasUnnamedReferenceEndpoint(left) && !hasUnnamedReferenceEndpoint(right))
+  )
+    return compared;
   return unresolvedDimension({
     dimension: "references",
     links: context.links,
     leftCount: leftProjection.length,
     rightCount: rightProjection.length,
     limitations: [
-      "At least one provider did not expose reference kinds, so equal endpoints do not prove equal edge semantics.",
+      "Reference endpoints outside named procedures are identified only by address, which does not align across different artifacts; named endpoints and reference kinds match.",
     ],
   });
 };

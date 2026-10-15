@@ -568,16 +568,30 @@ describe("function comparison ordering controls", () => {
     const right = controlled("0x2000", true);
     const rightWithoutNativeApi = { ...right, native_api: null };
 
-    const comparison = compareFunctions(
+    const relocated = compareFunctions(
       makeEvidence("d", left),
       makeEvidence("e", rightWithoutNativeApi),
     );
+    // Unnamed endpoints have no identity across artifacts, only within one.
+    const reordered = compareFunctions(
+      makeEvidence("d", left),
+      makeEvidence("d", controlled("0x1000", true)),
+    );
 
-    expect(comparison.status).toBe("unchanged");
-    for (const dimension of ["calls", "references", "strings_names"] as const)
-      expect(
-        comparison.dimensions.find((item) => item.dimension === dimension),
-      ).toMatchObject({ status: "unchanged" });
+    expect(relocated.status).toBe("unknown");
+    expect(reordered.status).toBe("unchanged");
+    for (const [comparison, references] of [
+      [relocated, "unknown"],
+      [reordered, "unchanged"],
+    ] as const)
+      for (const [dimension, status] of [
+        ["calls", "unchanged"],
+        ["references", references],
+        ["strings_names", "unchanged"],
+      ] as const)
+        expect(
+          comparison.dimensions.find((item) => item.dimension === dimension),
+        ).toMatchObject({ status });
   });
 });
 

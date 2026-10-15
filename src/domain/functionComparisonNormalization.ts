@@ -72,58 +72,97 @@ export const normalizeCfg = (
   return graph;
 };
 
-export const referenceProjection = (snapshot: FunctionSnapshot) =>
-  sorted([
-    ...snapshot.dossier.incoming_references.map((item) => ({
-      direction: "in",
-      source: item.source_procedure?.name ?? null,
-      target: item.target_procedure?.name ?? null,
-    })),
-    ...snapshot.dossier.outgoing_references.map((item) => ({
-      direction: "out",
-      source: item.source_procedure?.name ?? null,
-      target: item.target_procedure?.name ?? null,
-    })),
-  ]);
+type ReferenceEdge = FunctionSnapshot["dossier"]["outgoing_references"][number];
+
+const referenceRecords = (snapshot: FunctionSnapshot) => [
+  ...snapshot.dossier.incoming_references.map((edge) => ({
+    direction: "in",
+    edge,
+  })),
+  ...snapshot.dossier.outgoing_references.map((edge) => ({
+    direction: "out",
+    edge,
+  })),
+];
+
+/**
+ * A named endpoint is identified by its procedure name, so relocation alone is no change.
+ * An endpoint outside every named procedure has only its recorded address, which
+ * identifies it within one artifact; across artifacts its identity stays unresolved.
+ */
+const referenceEndpoint = (
+  procedure: ReferenceEdge["target_procedure"],
+  address: string,
+  sameArtifact: boolean,
+): string | { readonly address: string } | null => {
+  if (procedure !== null) return procedure.name;
+  if (!sameArtifact) return null;
+  const parsed = parseAddress(address);
+  return { address: parsed === null ? address : `0x${parsed.toString(16)}` };
+};
+
+const referenceEdges = (snapshot: FunctionSnapshot, sameArtifact: boolean) =>
+  referenceRecords(snapshot).map(({ direction, edge }) => ({
+    direction,
+    source: referenceEndpoint(
+      edge.source_procedure,
+      edge.source_address,
+      sameArtifact,
+    ),
+    target: referenceEndpoint(
+      edge.target_procedure,
+      edge.target_address,
+      sameArtifact,
+    ),
+    kind: edge.kind,
+  }));
+
+export const hasUnnamedReferenceEndpoint = (snapshot: FunctionSnapshot) =>
+  referenceRecords(snapshot).some(
+    ({ edge }) =>
+      edge.source_procedure === null || edge.target_procedure === null,
+  );
+
+export const referenceProjection = (
+  snapshot: FunctionSnapshot,
+  sameArtifact: boolean,
+) =>
+  sorted(
+    referenceEdges(snapshot, sameArtifact).map(
+      ({ direction, source, target }) => ({ direction, source, target }),
+    ),
+  );
 
 export const referenceKindProjection = (
   snapshot: FunctionSnapshot,
+  sameArtifact: boolean,
 ): readonly unknown[] | null => {
-  const edges = [
-    ...snapshot.dossier.incoming_references.map((edge) => ({
-      direction: "in",
-      edge,
-    })),
-    ...snapshot.dossier.outgoing_references.map((edge) => ({
-      direction: "out",
-      edge,
-    })),
-  ];
-  if (edges.some(({ edge }) => !edge.kind.available)) return null;
+  const edges = referenceEdges(snapshot, sameArtifact);
+  if (edges.some(({ kind }) => !kind.available)) return null;
   return sorted(
-    edges.map(({ direction, edge }) => {
-      if (!edge.kind.available)
+    edges.map(({ direction, source, target, kind }) => {
+      if (!kind.available)
         throw new TypeError(
           "Reference-kind availability changed during projection",
         );
       return {
         direction,
-        source: edge.source_procedure?.name ?? null,
-        target: edge.target_procedure?.name ?? null,
-        type: edge.kind.type,
-        flow: edge.kind.flow,
-        call: edge.kind.call,
-        jump: edge.kind.jump,
-        data: edge.kind.data,
-        read: edge.kind.read,
-        write: edge.kind.write,
-        indirect: edge.kind.indirect,
-        computed: edge.kind.computed,
-        conditional: edge.kind.conditional,
-        terminal: edge.kind.terminal,
-        primary: edge.kind.primary,
-        operand_index: edge.kind.operand_index,
-        external: edge.kind.external,
+        source,
+        target,
+        type: kind.type,
+        flow: kind.flow,
+        call: kind.call,
+        jump: kind.jump,
+        data: kind.data,
+        read: kind.read,
+        write: kind.write,
+        indirect: kind.indirect,
+        computed: kind.computed,
+        conditional: kind.conditional,
+        terminal: kind.terminal,
+        primary: kind.primary,
+        operand_index: kind.operand_index,
+        external: kind.external,
       };
     }),
   );
