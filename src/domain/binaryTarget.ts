@@ -544,7 +544,8 @@ const machArchitecture = (cpu: number): HeaderArchitecture | undefined => {
   return undefined;
 };
 
-const elfArchitecture = (
+/** The shared architecture name for an ELF `e_machine`, or undefined when REA does not map it. */
+export const elfArchitecture = (
   machine: number,
 ): Exclude<BinaryArchitecture, RawOnlyArchitecture> | undefined => {
   switch (machine) {

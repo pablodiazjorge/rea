@@ -116,6 +116,63 @@ export const elfFuseImage = (
   sentinelOffset: 4,
 });
 
+/** A PE image whose COFF header names `machine`, followed by a fuse wire. */
+export const peMachineFuseImage = (
+  machine: number,
+  fuses: readonly number[],
+): { readonly bytes: Buffer; readonly sentinelOffset: number } => {
+  const header = Buffer.alloc(0x80);
+  header.write("MZ", 0, "ascii");
+  header.writeUInt32LE(0x80, 0x3c);
+  const coff = Buffer.alloc(20);
+  coff.writeUInt16LE(machine, 0);
+  return {
+    bytes: Buffer.concat([
+      header,
+      Buffer.from("PE\0\0", "binary"),
+      coff,
+      FUSE_SENTINEL,
+      fuseWire(1, fuses),
+    ]),
+    sentinelOffset: 0x80 + 4 + coff.length,
+  };
+};
+
+/** An ELF image with a valid fixed header naming `machine`, followed by a fuse wire. */
+export const elfMachineFuseImage = (
+  machine: number,
+  fuses: readonly number[],
+  {
+    elfClass = 64,
+    byteOrder = "little",
+  }: {
+    readonly elfClass?: 32 | 64;
+    readonly byteOrder?: "little" | "big";
+  } = {},
+): { readonly bytes: Buffer; readonly sentinelOffset: number } => {
+  const size = elfClass === 64 ? 64 : 52;
+  const header = Buffer.alloc(size);
+  header.set([0x7f, 0x45, 0x4c, 0x46, elfClass === 64 ? 2 : 1], 0);
+  header[5] = byteOrder === "little" ? 1 : 2;
+  header[6] = 1;
+  const u16 = (value: number, offset: number) =>
+    byteOrder === "little"
+      ? header.writeUInt16LE(value, offset)
+      : header.writeUInt16BE(value, offset);
+  const u32 = (value: number, offset: number) =>
+    byteOrder === "little"
+      ? header.writeUInt32LE(value, offset)
+      : header.writeUInt32BE(value, offset);
+  u16(2, 16);
+  u16(machine, 18);
+  u32(1, 20);
+  u16(size, elfClass === 64 ? 52 : 40);
+  return {
+    bytes: Buffer.concat([header, FUSE_SENTINEL, fuseWire(1, fuses)]),
+    sentinelOffset: size,
+  };
+};
+
 export const truncatedFuseImage = (): Buffer =>
   thinMacho(
     0x0100000c,

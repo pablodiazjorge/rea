@@ -7,10 +7,12 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   elfFuseImage,
+  elfMachineFuseImage,
   fuseWire,
   FUSE_SENTINEL,
   OBSIDIAN_FUSE_BYTES,
   peFuseImage,
+  peMachineFuseImage,
   sentinelFreeMacho,
   thinFuseImage,
   thinMacho,
@@ -160,6 +162,56 @@ describe("Electron fuse wire reading", () => {
     expect(missing.slices[0]?.sentinel_count).toBe(0);
     expect(missing.runtime_implications).toEqual([]);
     expect(missing.limitations.join(" ")).toContain("unknown, not disabled");
+  });
+});
+
+describe("Electron fuse slice architecture", () => {
+  it.each([
+    ["PE x86", peMachineFuseImage(0x014c, OBSIDIAN_FUSE_BYTES), "x86"],
+    ["PE x86_64", peMachineFuseImage(0x8664, OBSIDIAN_FUSE_BYTES), "x86_64"],
+    ["PE arm64", peMachineFuseImage(0xaa64, OBSIDIAN_FUSE_BYTES), "arm64"],
+    [
+      "ELF32 x86",
+      elfMachineFuseImage(3, OBSIDIAN_FUSE_BYTES, { elfClass: 32 }),
+      "x86",
+    ],
+    ["ELF64 x86_64", elfMachineFuseImage(62, OBSIDIAN_FUSE_BYTES), "x86_64"],
+    ["ELF64 arm64", elfMachineFuseImage(183, OBSIDIAN_FUSE_BYTES), "arm64"],
+    [
+      "big-endian ELF32 arm",
+      elfMachineFuseImage(40, OBSIDIAN_FUSE_BYTES, {
+        elfClass: 32,
+        byteOrder: "big",
+      }),
+      "arm",
+    ],
+  ])("reports the %s header's architecture", async (_name, image, expected) => {
+    const root = await createTestTempDirectory("rea-electron-fuses-arch-");
+    const path = join(root, "app");
+    await writeFile(path, image.bytes);
+    const report = await inspect(path);
+    expect(report.slices[0]?.architecture).toBe(expected);
+    expect(report.slices[0]?.sentinels[0]?.sentinel_offset).toBe(
+      image.sentinelOffset,
+    );
+  });
+
+  it("keeps an unmapped machine or a header it cannot read as null", async () => {
+    const root = await createTestTempDirectory("rea-electron-fuses-arch-");
+    const images = {
+      // IMAGE_FILE_MACHINE_RISCV64 and EM_NONE are not mapped.
+      "riscv64.exe": peMachineFuseImage(0x5064, OBSIDIAN_FUSE_BYTES).bytes,
+      "none.elf": elfMachineFuseImage(0, OBSIDIAN_FUSE_BYTES).bytes,
+      // Magic bytes followed directly by the wire: no readable header.
+      "bare.exe": peFuseImage(OBSIDIAN_FUSE_BYTES).bytes,
+      "bare.elf": elfFuseImage(OBSIDIAN_FUSE_BYTES).bytes,
+    };
+    for (const [name, bytes] of Object.entries(images)) {
+      await writeFile(join(root, name), bytes);
+      const report = await inspect(join(root, name));
+      expect(report.slices[0]?.architecture, name).toBeNull();
+      expect(report.slices[0]?.sentinel_count, name).toBe(1);
+    }
   });
 });
 

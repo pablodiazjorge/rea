@@ -69,3 +69,18 @@ it("preserves malformed fuse output ahead of late cancellation", async () => {
   expect(invalid.ok).toBe(false);
   if (!invalid.ok) expect(invalid.error).toBeInstanceOf(AnalysisOutputError);
 });
+
+it("names the Evidence subject's architecture from a single ELF or PE slice", async () => {
+  const slice = report.slices[0];
+  if (slice === undefined) throw new Error("fixture slice missing");
+  const result = await new ElectronFuseService({
+    identity,
+    inspect: async () =>
+      ok({ ...report, slices: [{ ...slice, architecture: "x86_64" }] }),
+  }).inspect({ path: report.artifact.selected_path });
+  if (!result.ok) throw result.error;
+  expect(parseEvidence(result.value).subject).toMatchObject({
+    format: "elf",
+    architecture: "x86_64",
+  });
+});

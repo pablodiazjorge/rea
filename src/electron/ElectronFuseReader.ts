@@ -7,6 +7,9 @@ import {
   readMachoImage,
 } from "../artifacts/apple/MachoLoadCommandReader.js";
 import type { ReadAt } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { elfArchitecture } from "../domain/binaryTarget.js";
+import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
+import { decodePeMachine } from "../domain/peMachine.js";
 import {
   electronFuseName,
   electronFuseState,
@@ -214,12 +217,27 @@ const identifyContainer = async (
   if (isElf(head))
     return {
       format: "elf",
-      slices: [{ index: 0, fileOffset: 0, size, architecture: null }],
+      slices: [
+        {
+          index: 0,
+          fileOffset: 0,
+          size,
+          architecture: await elfSliceArchitecture(readAt, size),
+        },
+      ],
     };
-  if (await isPe(readAt, size))
+  const peHeader = await peHeaderOffset(readAt, size);
+  if (peHeader !== null)
     return {
       format: "pe",
-      slices: [{ index: 0, fileOffset: 0, size, architecture: null }],
+      slices: [
+        {
+          index: 0,
+          fileOffset: 0,
+          size,
+          architecture: await peSliceArchitecture(readAt, size, peHeader),
+        },
+      ],
     };
   throw new ElectronFuseFormatFailure(
     "unsupported",
@@ -458,11 +476,15 @@ const isFat = (head: Uint8Array): boolean => {
   return FAT_MAGICS.has(magic);
 };
 
-const isPe = async (readAt: ReadAt, size: number): Promise<boolean> => {
-  if (size < 64) return false;
+/** The offset of a PE image's `PE\0\0` signature, or null when the file is not a PE image. */
+const peHeaderOffset = async (
+  readAt: ReadAt,
+  size: number,
+): Promise<number | null> => {
+  if (size < 64) return null;
   const header = await readAt(0, 64);
   if (header.length < 64 || header[0] !== 0x4d || header[1] !== 0x5a)
-    return false;
+    return null;
   const offset = Buffer.from(
     header.buffer,
     header.byteOffset,
@@ -474,15 +496,52 @@ const isPe = async (readAt: ReadAt, size: number): Promise<boolean> => {
     offset > ELECTRON_FUSE_LIMITS.maximumPeHeaderOffset ||
     offset > size - 4
   )
-    return false;
+    return null;
   const signature = await readAt(offset, 4);
-  return (
-    signature.length === 4 &&
+  return signature.length === 4 &&
     signature[0] === 0x50 &&
     signature[1] === 0x45 &&
     signature[2] === 0 &&
     signature[3] === 0
+    ? offset
+    : null;
+};
+
+/**
+ * The architecture a PE COFF header names, or null for a truncated header or a machine REA does not
+ * map. An OS-override machine marks a managed ReadyToRun image for another system, never an
+ * Electron host, so it stays null too.
+ */
+const peSliceArchitecture = async (
+  readAt: ReadAt,
+  size: number,
+  offset: number,
+): Promise<string | null> => {
+  if (offset + 6 > size) return null;
+  const field = await readAt(offset + 4, 2);
+  if (field.length < 2) return null;
+  const decoded = decodePeMachine(
+    Buffer.from(field.buffer, field.byteOffset, 2).readUInt16LE(0),
   );
+  return decoded !== undefined && !decoded.nativeOsOverride
+    ? decoded.architecture
+    : null;
+};
+
+/** The architecture an ELF header names, or null for an invalid header or a machine REA does not map. */
+const elfSliceArchitecture = async (
+  readAt: ReadAt,
+  size: number,
+): Promise<string | null> => {
+  const head = await readAt(0, Math.min(size, 64));
+  const bytes = Buffer.from(head.buffer, head.byteOffset, head.byteLength);
+  const fixed = readElfFixedHeader(bytes, size);
+  if (!fixed.ok) return null;
+  const machine =
+    fixed.value.byteOrder === "little"
+      ? bytes.readUInt16LE(18)
+      : bytes.readUInt16BE(18);
+  return elfArchitecture(machine) ?? null;
 };
 
 const isMissingPath = (cause: unknown): boolean =>
